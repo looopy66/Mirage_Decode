@@ -1,4 +1,4 @@
-name: Build Android APK (Compatible Mode)
+name: Build Android APK (Integrated Fix)
 
 on:
   workflow_dispatch:
@@ -23,78 +23,85 @@ jobs:
 
       - name: Install web dependencies
         working-directory: ./web
-        run: yarn install
+        run: yarn install --ignore-engines
 
-      - name: Patch Frontend Code for Blob Download
+      - name: Patch Frontend Code for Mobile Storage
         working-directory: ./web/src
         run: |
           node -e "
           const fs = require('fs');
           const path = 'App.tsx';
-          if (!fs.existsSync(path)) process.exit(0);
+          if (!fs.existsSync(path)) {
+            console.log('App.tsx not found, skipping patch');
+            process.exit(0);
+          }
           let content = fs.readFileSync(path, 'utf8');
 
-          // 1. 注入符合 TS 规范的下载函数，并加上注释跳过下一个变量检查
-          const downloadFn = \`
+          // 1. 在文件顶部注入 Capacitor 插件引用和兼容安卓的保存逻辑
+          const nativeSaveFn = \`
+          import { Filesystem, Directory } from '@capacitor/filesystem';
+
           /** @ts-ignore */
-          const safeDownloadBase64 = (base64Data: string, filename: string) => {
-            const link = document.createElement('a');
-            link.href = base64Data;
-            link.download = filename;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+          const safeDownloadBase64 = async (base64Data: string, filename: string) => {
+            try {
+              // 处理 base64 格式
+              const base64Content = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+              
+              // 写入到公共文档目录，这在安卓上会触发权限申请
+              await Filesystem.writeFile({
+                path: 'Mirage_' + Date.now() + '.png',
+                data: base64Content,
+                directory: Directory.Documents,
+                recursive: true
+              });
+              alert('图片已保存至系统【文档(Documents)】文件夹');
+            } catch (e) {
+              console.error('原生保存失败，尝试浏览器下载', e);
+              const link = document.createElement('a');
+              link.href = base64Data;
+              link.download = filename;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+            }
           };
-          \`;
+          \n\`;
 
-          // 2. 注入到文件顶部（Imports 之后）
-          content = downloadFn + content;
+          // 2. 拼接代码：将新函数放在最前面
+          content = nativeSaveFn + content;
 
-          // 3. 改进替换逻辑，确保匹配到原始仓库的保存调用
-          // 原始仓库通常使用 saveAs(blob, name) 或类似的逻辑
-          content = content.replace(/saveAs\((.*?)\)/g, 'safeDownloadBase64($1, \"mirage_icon.png\")');
+          // 3. 替换原始的保存调用 (匹配 saveAs 逻辑)
+          content = content.replace(/saveAs\((.*?)\)/g, 'safeDownloadBase64($1, \"mirage_result.png\")');
           
           fs.writeFileSync(path, content);
-          console.log('Frontend code patched with TS types.');
+          console.log('Frontend code patched with Native Filesystem API.');
           "
 
       - name: Build Web Project
         working-directory: ./web
-        run: |
-          # 关键修改：通过增加 --skipLibCheck 和修改构建命令来绕过 tsc 检查
-          # 如果 package.json 里的 build 命令是 tsc && vite build，我们直接运行 vite build
-          npx vite build
+        run: npx vite build
 
       - name: Initialize Capacitor and Android
         working-directory: ./web
         run: |
-                # 1. 确保安装了 Capacitor 核心
-                yarn add @capacitor/core --ignore-engines
-                yarn add -D @capacitor/cli @capacitor/android --ignore-engines
-                
-                # 2. 构建项目（根据你的日志，它会生成到 ../docs）
-                npx vite build
-      
-                # 3. 【核心修正】将构建出的 ../docs 目录移动到 Capacitor 期望的 ./dist
-                if [ -d "../docs" ]; then
-                  echo "Found assets in ../docs, moving to ./dist..."
-                  rm -rf dist # 如果存在旧的则删除
-                  mv ../docs dist
-                fi
-      
-                # 4. 确认 dist 目录中有 index.html
-                if [ ! -f "dist/index.html" ]; then
-                  echo "Error: index.html not found in dist!"
-                  ls -R dist
-                  exit 1
-                fi
-      
-                # 5. 初始化并同步
-                # 使用 --web-dir dist 强制指定
-                npx cap init "MirageDecode" "com.tankfactory.mirage" --web-dir dist
-                npx cap add android
-                npx cap sync android
-                
+          # 安装核心包及文件系统插件
+          yarn add @capacitor/core @capacitor/filesystem --ignore-engines
+          yarn add -D @capacitor/cli @capacitor/android --ignore-engines
+          
+          # 路径修正：将 Vite 产出的 ../docs 移动到 Capacitor 识别的 ./dist
+          if [ -d "../docs" ]; then
+            echo "Moving assets from ../docs to ./dist..."
+            rm -rf dist
+            mv ../docs dist
+          fi
+          
+          # 初始化配置
+          npx cap init "MirageDecode" "com.tankfactory.mirage" --web-dir dist
+          npx cap add android
+          
+          # 同步资源
+          npx cap sync android
+
       - name: Inject Android Permissions
         working-directory: ./web/android/app/src/main
         run: |
@@ -102,10 +109,20 @@ jobs:
           const fs = require('fs');
           const file = 'AndroidManifest.xml';
           let content = fs.readFileSync(file, 'utf8');
-          const perms = '\n    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" />\n    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" />\n';
-          content = content.replace('<application', perms + '    <application android:requestLegacyExternalStorage=\"true\" ');
-          fs.writeFileSync(file, content);
-          "
+          
+          // 注入存储权限声明
+          const perms = \`
+          <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" />
+          <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" />
+          <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\" />
+                \`;
+                
+                // 插入权限并开启 Legacy Storage 模式
+                content = content.replace('<application', perms + '    <application android:requestLegacyExternalStorage=\"true\" ');
+                
+                fs.writeFileSync(file, content);
+                console.log('Android Manifest updated with storage permissions.');
+                "
 
       - name: Build APK with Gradle
         working-directory: ./web/android
@@ -116,5 +133,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mirage_Decode_Compatible_APK
+          name: Mirage_Decode_Mobile_Final
           path: web/android/app/build/outputs/apk/debug/app-debug.apk
