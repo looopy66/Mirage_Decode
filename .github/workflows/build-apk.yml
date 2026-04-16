@@ -66,28 +66,35 @@ jobs:
           npx vite build
 
       - name: Initialize Capacitor and Android
-        working-directory: ./web
-        run: |
+       working-directory: ./web
+       run: |
                 # 1. 确保安装了 Capacitor 核心
                 yarn add @capacitor/core --ignore-engines
                 yarn add -D @capacitor/cli @capacitor/android --ignore-engines
                 
-                # 2. 检查并创建 dist 目录（防止构建失败导致后续报错难以排查）
-                if [ ! -d "dist" ]; then
-                  echo "Error: dist directory not found. Running build again..."
-                  npx vite build
+                # 2. 构建项目（根据你的日志，它会生成到 ../docs）
+                npx vite build
+      
+                # 3. 【核心修正】将构建出的 ../docs 目录移动到 Capacitor 期望的 ./dist
+                if [ -d "../docs" ]; then
+                  echo "Found assets in ../docs, moving to ./dist..."
+                  rm -rf dist # 如果存在旧的则删除
+                  mv ../docs dist
                 fi
       
-                # 3. 初始化项目并显式指定 web-dir 为当前目录下的 dist
-                # 如果项目之前已经初始化过，这里使用 --force 或者直接更新配置
+                # 4. 确认 dist 目录中有 index.html
+                if [ ! -f "dist/index.html" ]; then
+                  echo "Error: index.html not found in dist!"
+                  ls -R dist
+                  exit 1
+                fi
+      
+                # 5. 初始化并同步
+                # 使用 --web-dir dist 强制指定
                 npx cap init "MirageDecode" "com.tankfactory.mirage" --web-dir dist
-                
-                # 4. 添加安卓平台
                 npx cap add android
-                
-                # 5. 将 web 资源同步到安卓原生工程
                 npx cap sync android
-
+                
       - name: Inject Android Permissions
         working-directory: ./web/android/app/src/main
         run: |
