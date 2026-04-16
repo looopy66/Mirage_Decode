@@ -13,7 +13,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
@@ -68,11 +68,12 @@ jobs:
       - name: Initialize Capacitor and Android
         working-directory: ./web
         run: |
-          yarn add @capacitor/core
-          yarn add -D @capacitor/cli @capacitor/android
-          npx cap init "MirageDecode" "com.tankfactory.mirage" --web-dir dist
-          npx cap add android
-          npx cap sync android
+                # 同样在 add 时增加 --ignore-engines
+                yarn add @capacitor/core --ignore-engines
+                yarn add -D @capacitor/cli @capacitor/android --ignore-engines
+                npx cap init "MirageDecode" "com.tankfactory.mirage" --web-dir dist
+                npx cap add android
+                npx cap sync android
 
       - name: Inject Android Permissions
         working-directory: ./web/android/app/src/main
