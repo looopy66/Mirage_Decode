@@ -66,13 +66,26 @@ jobs:
           npx vite build
 
       - name: Initialize Capacitor and Android
-        working-directory: ./web
-        run: |
-                # 同样在 add 时增加 --ignore-engines
+       working-directory: ./web
+       run: |
+                # 1. 确保安装了 Capacitor 核心
                 yarn add @capacitor/core --ignore-engines
                 yarn add -D @capacitor/cli @capacitor/android --ignore-engines
+                
+                # 2. 检查并创建 dist 目录（防止构建失败导致后续报错难以排查）
+                if [ ! -d "dist" ]; then
+                  echo "Error: dist directory not found. Running build again..."
+                  npx vite build
+                fi
+      
+                # 3. 初始化项目并显式指定 web-dir 为当前目录下的 dist
+                # 如果项目之前已经初始化过，这里使用 --force 或者直接更新配置
                 npx cap init "MirageDecode" "com.tankfactory.mirage" --web-dir dist
+                
+                # 4. 添加安卓平台
                 npx cap add android
+                
+                # 5. 将 web 资源同步到安卓原生工程
                 npx cap sync android
 
       - name: Inject Android Permissions
