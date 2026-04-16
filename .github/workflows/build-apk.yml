@@ -66,8 +66,8 @@ jobs:
           npx vite build
 
       - name: Initialize Capacitor and Android
-       working-directory: ./web
-       run: |
+        working-directory: ./web
+        run: |
                 # 1. 确保安装了 Capacitor 核心
                 yarn add @capacitor/core --ignore-engines
                 yarn add -D @capacitor/cli @capacitor/android --ignore-engines
